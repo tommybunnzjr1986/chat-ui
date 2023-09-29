@@ -4,7 +4,9 @@ import { collections } from "$lib/server/database";
 import type { Conversation } from "$lib/types/Conversation";
 import { UrlDependency } from "$lib/types/UrlDependency";
 import { defaultModel, models, oldModels, validateModel } from "$lib/server/models";
-import { authCondition } from "$lib/server/auth";
+import { authCondition, requiresUser } from "$lib/server/auth";
+import { DEFAULT_SETTINGS } from "$lib/types/Settings";
+import { SERPAPI_KEY, SERPER_API_KEY, MESSAGES_BEFORE_LOGIN } from "$env/static/private";
 
 export const load: LayoutServerLoad = async ({ locals, depends, url }) => {
 	const { conversations } = collections;
@@ -54,20 +56,32 @@ export const load: LayoutServerLoad = async ({ locals, depends, url }) => {
 			}))
 			.toArray(),
 		settings: {
-			shareConversationsWithModelAuthors: settings?.shareConversationsWithModelAuthors ?? true,
+			shareConversationsWithModelAuthors:
+				settings?.shareConversationsWithModelAuthors ??
+				DEFAULT_SETTINGS.shareConversationsWithModelAuthors,
 			ethicsModalAcceptedAt: settings?.ethicsModalAcceptedAt ?? null,
-			activeModel: settings?.activeModel ?? defaultModel.id,
+			activeModel: settings?.activeModel ?? DEFAULT_SETTINGS.activeModel,
+			searchEnabled: !!(SERPAPI_KEY || SERPER_API_KEY),
 		},
 		models: models.map((model) => ({
 			id: model.id,
 			name: model.name,
 			websiteUrl: model.websiteUrl,
+			modelUrl: model.modelUrl,
 			datasetName: model.datasetName,
+			datasetUrl: model.datasetUrl,
 			displayName: model.displayName,
 			description: model.description,
 			promptExamples: model.promptExamples,
 			parameters: model.parameters,
 		})),
 		oldModels,
+		user: locals.user && {
+			username: locals.user.username,
+			avatarUrl: locals.user.avatarUrl,
+			email: locals.user.email,
+		},
+		requiresLogin: requiresUser,
+		messagesBeforeLogin: MESSAGES_BEFORE_LOGIN ? parseInt(MESSAGES_BEFORE_LOGIN) : 0,
 	};
 };

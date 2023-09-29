@@ -4,7 +4,7 @@
 	import { page } from "$app/stores";
 	import "../styles/main.css";
 	import { base } from "$app/paths";
-	import { PUBLIC_ORIGIN } from "$env/static/public";
+	import { PUBLIC_ORIGIN, PUBLIC_APP_DISCLAIMER } from "$env/static/public";
 
 	import { shareConversation } from "$lib/shareConversation";
 	import { UrlDependency } from "$lib/types/UrlDependency";
@@ -13,8 +13,9 @@
 	import MobileNav from "$lib/components/MobileNav.svelte";
 	import NavMenu from "$lib/components/NavMenu.svelte";
 	import Toast from "$lib/components/Toast.svelte";
-	import EthicsModal from "$lib/components/EthicsModal.svelte";
 	import SettingsModal from "$lib/components/SettingsModal.svelte";
+	import LoginModal from "$lib/components/LoginModal.svelte";
+	import { PUBLIC_APP_ASSETS, PUBLIC_APP_NAME } from "$env/static/public";
 
 	export let data;
 
@@ -56,7 +57,7 @@
 			if ($page.params.id !== id) {
 				await invalidate(UrlDependency.ConversationList);
 			} else {
-				await goto(base || "/", { invalidateAll: true });
+				await goto(`${base}/`, { invalidateAll: true });
 			}
 		} catch (err) {
 			console.error(err);
@@ -91,16 +92,59 @@
 	});
 
 	$: if ($error) onError();
+
+	const requiresLogin =
+		!$page.error &&
+		!$page.route.id?.startsWith("/r/") &&
+		(data.requiresLogin
+			? !data.user
+			: !data.settings.ethicsModalAcceptedAt && !!PUBLIC_APP_DISCLAIMER);
+
+	let loginModalVisible = false;
 </script>
 
 <svelte:head>
+	<title>{PUBLIC_APP_NAME}</title>
 	<meta name="description" content="The first open source alternative to ChatGPT. 💪" />
 	<meta name="twitter:card" content="summary_large_image" />
 	<meta name="twitter:site" content="@huggingface" />
-	<meta property="og:title" content="HuggingChat" />
+	<meta property="og:title" content={PUBLIC_APP_NAME} />
 	<meta property="og:type" content="website" />
 	<meta property="og:url" content="{PUBLIC_ORIGIN || $page.url.origin}{base}" />
-	<meta property="og:image" content="{PUBLIC_ORIGIN || $page.url.origin}{base}/thumbnail.png" />
+	<meta
+		property="og:image"
+		content="{PUBLIC_ORIGIN || $page.url.origin}{base}/{PUBLIC_APP_ASSETS}/thumbnail.png"
+	/>
+	<link
+		rel="icon"
+		href="{PUBLIC_ORIGIN || $page.url.origin}{base}/{PUBLIC_APP_ASSETS}/favicon.svg"
+		type="image/svg+xml"
+	/>
+	<link
+		rel="icon"
+		href="{PUBLIC_ORIGIN || $page.url.origin}{base}/{PUBLIC_APP_ASSETS}/favicon.png"
+		type="image/png"
+	/>
+	<!-- Icon Support for iOS Bookmark Home Screen -->
+	<link
+		rel="apple-touch-icon"
+		href="{PUBLIC_ORIGIN || $page.url.origin}{base}/{PUBLIC_APP_ASSETS}/touch-icon-ipad-retina.png"
+		sizes="167x167"
+		type="image/png"
+	/>
+	<link
+		rel="apple-touch-icon"
+		href="{PUBLIC_ORIGIN || $page.url.origin}{base}/{PUBLIC_APP_ASSETS}/touch-icon-ipad.png"
+		sizes="152x152"
+		type="image/png"
+	/>
+	<link
+		rel="apple-touch-icon"
+		href="{PUBLIC_ORIGIN ||
+			$page.url.origin}{base}/{PUBLIC_APP_ASSETS}/touch-icon-iphone-retina.png"
+		sizes="180x180"
+		type="image/png"
+	/>
 </svelte:head>
 
 <div
@@ -113,6 +157,9 @@
 	>
 		<NavMenu
 			conversations={data.conversations}
+			user={data.user}
+			canLogin={data.user === undefined && data.requiresLogin}
+			bind:loginModalVisible
 			on:shareConversation={(ev) => shareConversation(ev.detail.id, ev.detail.title)}
 			on:deleteConversation={(ev) => deleteConversation(ev.detail)}
 			on:clickSettings={() => (isSettingsOpen = true)}
@@ -122,6 +169,9 @@
 	<nav class="grid max-h-screen grid-cols-1 grid-rows-[auto,1fr,auto] max-md:hidden">
 		<NavMenu
 			conversations={data.conversations}
+			user={data.user}
+			canLogin={data.user === undefined && data.requiresLogin}
+			bind:loginModalVisible
 			on:shareConversation={(ev) => shareConversation(ev.detail.id, ev.detail.title)}
 			on:deleteConversation={(ev) => deleteConversation(ev.detail)}
 			on:clickSettings={() => (isSettingsOpen = true)}
@@ -132,10 +182,14 @@
 		<Toast message={currentError} />
 	{/if}
 	{#if isSettingsOpen}
-		<SettingsModal on:close={() => (isSettingsOpen = false)} settings={data.settings} />
+		<SettingsModal
+			on:close={() => (isSettingsOpen = false)}
+			settings={data.settings}
+			models={data.models}
+		/>
 	{/if}
-	{#if !data.settings.ethicsModalAcceptedAt}
-		<EthicsModal settings={data.settings} />
+	{#if (requiresLogin && data.messagesBeforeLogin === 0) || loginModalVisible}
+		<LoginModal settings={data.settings} />
 	{/if}
 	<slot />
 </div>

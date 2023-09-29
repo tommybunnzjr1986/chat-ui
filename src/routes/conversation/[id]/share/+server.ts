@@ -1,9 +1,9 @@
 import { base } from "$app/paths";
-import { PUBLIC_ORIGIN } from "$env/static/public";
+import { PUBLIC_ORIGIN, PUBLIC_SHARE_PREFIX } from "$env/static/public";
 import { authCondition } from "$lib/server/auth";
 import { collections } from "$lib/server/database";
 import type { SharedConversation } from "$lib/types/SharedConversation";
-import { sha256 } from "$lib/utils/sha256";
+import { hashConv } from "$lib/utils/hashConv.js";
 import { error } from "@sveltejs/kit";
 import { ObjectId } from "mongodb";
 import { nanoid } from "nanoid";
@@ -18,7 +18,7 @@ export async function POST({ params, url, locals }) {
 		throw error(404, "Conversation not found");
 	}
 
-	const hash = await sha256(JSON.stringify(conversation.messages));
+	const hash = await hashConv(conversation);
 
 	const existingShare = await collections.sharedConversations.findOne({ hash });
 
@@ -52,5 +52,5 @@ export async function POST({ params, url, locals }) {
 }
 
 function getShareUrl(url: URL, shareId: string): string {
-	return `${PUBLIC_ORIGIN || url.origin}${base}/r/${shareId}`;
+	return `${PUBLIC_SHARE_PREFIX || `${PUBLIC_ORIGIN || url.origin}${base}`}/r/${shareId}`;
 }

@@ -1,10 +1,12 @@
+import { MESSAGES_BEFORE_LOGIN, RATE_LIMIT } from "$env/static/private";
 import { buildPrompt } from "$lib/buildPrompt";
 import { PUBLIC_SEP_TOKEN } from "$lib/constants/publicSepToken";
 import { abortedGenerations } from "$lib/server/abortedGenerations";
-import { authCondition } from "$lib/server/auth";
+import { authCondition, requiresUser } from "$lib/server/auth";
 import { collections } from "$lib/server/database";
 import { modelEndpoint } from "$lib/server/modelEndpoint";
 import { models } from "$lib/server/models";
+import { ERROR_MESSAGES } from "$lib/stores/errors.js";
 import type { Message } from "$lib/types/Message";
 import { concatUint8Arrays } from "$lib/utils/concatUint8Arrays";
 import { streamToAsyncIterable } from "$lib/utils/streamToAsyncIterable";
@@ -20,6 +22,12 @@ export async function POST({ request, fetch, locals, params }) {
 	const convId = new ObjectId(id);
 	const date = new Date();
 
+	const userId = locals.user?._id ?? locals.sessionId;
+
+	if (!userId) {
+		throw error(401, "Unauthorized");
+	}
+
 	const conv = await collections.conversations.findOne({
 		_id: convId,
 		...authCondition(locals),
@@ -27,6 +35,20 @@ export async function POST({ request, fetch, locals, params }) {
 
 	if (!conv) {
 		throw error(404, "Conversation not found");
+	}
+
+	if (
+		!locals.user?._id &&
+		requiresUser &&
+		conv.messages.length > (MESSAGES_BEFORE_LOGIN ? parseInt(MESSAGES_BEFORE_LOGIN) : 0)
+	) {
+		throw error(429, "Exceeded number of messages before login");
+	}
+
+	const nEvents = await collections.messageEvents.countDocuments({ userId });
+
+	if (RATE_LIMIT != "" && nEvents > parseInt(RATE_LIMIT)) {
+		throw error(429, ERROR_MESSAGES.rateLimited);
 	}
 
 	const model = models.find((m) => m.id === conv.model);
@@ -38,13 +60,15 @@ export async function POST({ request, fetch, locals, params }) {
 	const json = await request.json();
 	const {
 		inputs: newPrompt,
-		options: { id: messageId, is_retry },
+		options: { id: messageId, is_retry, web_search_id, response_id: responseId },
 	} = z
 		.object({
 			inputs: z.string().trim().min(1),
 			options: z.object({
 				id: z.optional(z.string().uuid()),
+				response_id: z.optional(z.string().uuid()),
 				is_retry: z.optional(z.boolean()),
+				web_search_id: z.ostring(),
 			}),
 		})
 		.parse(json);
@@ -57,17 +81,22 @@ export async function POST({ request, fetch, locals, params }) {
 			}
 			return [
 				...conv.messages.slice(0, retryMessageIdx),
-				{ content: newPrompt, from: "user", id: messageId as Message["id"] },
+				{ content: newPrompt, from: "user", id: messageId as Message["id"], updatedAt: new Date() },
 			];
 		}
 		return [
 			...conv.messages,
-			{ content: newPrompt, from: "user", id: (messageId as Message["id"]) || crypto.randomUUID() },
+			{
+				content: newPrompt,
+				from: "user",
+				id: (messageId as Message["id"]) || crypto.randomUUID(),
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
 		];
 	})() satisfies Message[];
 
-	const prompt = buildPrompt(messages, model);
-
+	const prompt = await buildPrompt(messages, model, web_search_id);
 	const randomEndpoint = modelEndpoint(model);
 
 	const abortController = new AbortController();
@@ -110,7 +139,19 @@ export async function POST({ request, fetch, locals, params }) {
 			}
 		}
 
-		messages.push({ from: "assistant", content: generated_text, id: crypto.randomUUID() });
+		messages.push({
+			from: "assistant",
+			content: generated_text,
+			webSearchId: web_search_id,
+			id: (responseId as Message["id"]) || crypto.randomUUID(),
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		});
+
+		await collections.messageEvents.insertOne({
+			userId: userId,
+			createdAt: new Date(),
+		});
 
 		await collections.conversations.updateOne(
 			{
@@ -126,7 +167,6 @@ export async function POST({ request, fetch, locals, params }) {
 	}
 
 	saveMessage().catch(console.error);
-
 	// Todo: maybe we should wait for the message to be saved before ending the response - in case of errors
 	return new Response(stream1, {
 		headers: Object.fromEntries(resp.headers.entries()),
